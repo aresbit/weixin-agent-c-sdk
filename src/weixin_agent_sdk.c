@@ -57,6 +57,7 @@ struct wxa_client {
   long last_message_id;
   sp_da(struct wxa_retry_send) retry_sends;
   unsigned long long last_send_at_ms;
+  unsigned int log_level;
 };
 
 typedef struct {
@@ -106,6 +107,13 @@ typedef struct {
   int failed;
 } wxa_selftest_state_t;
 
+enum {
+  WXA_LOG_LEVEL_DEBUG = 0U,
+  WXA_LOG_LEVEL_INFO = 1U,
+  WXA_LOG_LEVEL_WARN = 2U,
+  WXA_LOG_LEVEL_ERROR = 3U
+};
+
 static sp_str_t wxa_json_get_string(const char* body, const char* key);
 static sp_str_t wxa_json_get_string_after_range(const char* body, const char* after, const char* key, const char* end);
 static long wxa_json_get_long(const char* body, const char* key, bool* found);
@@ -122,6 +130,8 @@ static void wxa_release_monitor_lock(wxa_client_t* client);
 static void wxa_log_sync_state(wxa_client_t* client, const char* phase, sp_str_t sync_buf);
 static unsigned int wxa_random_range_ms(unsigned int min_ms, unsigned int max_ms);
 static sp_str_t wxa_build_send_text_body(const char* to_user_id, const char* context_token, const char* text);
+static void wxa_log_at(wxa_client_t* client, unsigned int level, const char* message);
+static void wxa_log_debug(wxa_client_t* client, const char* message);
 
 static sp_str_t wxa_log_preview(sp_str_t value) {
   u32 preview_len = value.len < 48U ? value.len : 48U;
@@ -368,13 +378,36 @@ static bool wxa_refresh_client_id_in_send_body(sp_str_t* body) {
   return true;
 }
 
-static void wxa_log(wxa_client_t* client, const char* message) {
+static unsigned int wxa_default_log_level(void) {
+  const char* level = getenv("WXA_LOG_LEVEL");
+  if (level == NULL || *level == '\0') {
+    return WXA_LOG_LEVEL_INFO;
+  }
+  if (strcasecmp(level, "debug") == 0) return WXA_LOG_LEVEL_DEBUG;
+  if (strcasecmp(level, "info") == 0) return WXA_LOG_LEVEL_INFO;
+  if (strcasecmp(level, "warn") == 0 || strcasecmp(level, "warning") == 0) return WXA_LOG_LEVEL_WARN;
+  if (strcasecmp(level, "error") == 0) return WXA_LOG_LEVEL_ERROR;
+  return WXA_LOG_LEVEL_INFO;
+}
+
+static void wxa_log_at(wxa_client_t* client, unsigned int level, const char* message) {
+  if (client != NULL && level < client->log_level) {
+    return;
+  }
   if (client != NULL && client->log_fn != NULL) {
     client->log_fn(client->log_user_data, message);
     return;
   }
   fputs(message, stderr);
   fputc('\n', stderr);
+}
+
+static void wxa_log(wxa_client_t* client, const char* message) {
+  wxa_log_at(client, WXA_LOG_LEVEL_INFO, message);
+}
+
+static void wxa_log_debug(wxa_client_t* client, const char* message) {
+  wxa_log_at(client, WXA_LOG_LEVEL_DEBUG, message);
 }
 
 static bool wxa_curl_init_once(void) {
@@ -2631,6 +2664,7 @@ wxa_client_t* wxa_client_new(const wxa_client_options_t* options) {
   client->last_message_id = 0L;
   client->retry_sends = NULL;
   client->last_send_at_ms = 0ULL;
+  client->log_level = wxa_default_log_level();
   (void)wxa_ensure_dir(client->media_dir);
   wxa_try_load_persisted_account(client);
   return client;
@@ -3070,11 +3104,11 @@ static void wxa_handle_monitor_backoff(wxa_client_t* client, unsigned int* conse
     sleep_ms = wxa_random_range_ms(250U, 600U);
   }
   sp_str_t msg = sp_format("loop error count={}", SP_FMT_U32(failures));
-  wxa_log(client, msg.data);
+  wxa_log_debug(client, msg.data);
   wxa_free_str(&msg);
   {
     sp_str_t delay_msg = sp_format("loop backoff sleep_ms={}", SP_FMT_U32(sleep_ms));
-    wxa_log(client, delay_msg.data);
+    wxa_log_debug(client, delay_msg.data);
     wxa_free_str(&delay_msg);
   }
   wxa_sleep_ms(sleep_ms);
@@ -3130,7 +3164,7 @@ static void wxa_log_sync_state(wxa_client_t* client, const char* phase, sp_str_t
     SP_FMT_U32(sync_buf.len),
     SP_FMT_STR(preview)
   );
-  wxa_log(client, msg.data);
+  wxa_log_debug(client, msg.data);
   wxa_free_str(&msg);
   wxa_free_str(&preview);
 }
@@ -3147,7 +3181,7 @@ static void wxa_log_updates_response(wxa_client_t* client, sp_str_t body) {
   }
   sp_str_t preview = wxa_log_preview(body);
   sp_str_t msg = sp_format("recv body_preview={}", SP_FMT_STR(preview));
-  wxa_log(client, msg.data);
+  wxa_log_debug(client, msg.data);
   wxa_free_str(&msg);
   wxa_free_str(&preview);
 
@@ -3249,7 +3283,7 @@ wxa_status_t wxa_client_run(
         consecutive_ret_minus1++;
         if (consecutive_ret_minus1 % 10U == 0U) {
           sp_str_t msg = sp_format("getupdates transient ret=-1 count={}", SP_FMT_U32(consecutive_ret_minus1));
-          wxa_log(client, msg.data);
+          wxa_log_debug(client, msg.data);
           wxa_free_str(&msg);
         }
         if (consecutive_ret_minus1 >= 1U) {
