@@ -1,0 +1,36 @@
+{
+  "ret": 0,
+  "get_updates_buf": "buf-media",
+  "msgs": [
+    {
+      "seq": 4,
+      "from_user_id": "user-media",
+      "context_token": "ctx-media",
+      "item_list": [
+        {
+          "type": 4,
+          "file_item": {
+            "media": {
+              "encrypt_query_param": "file-param",
+              "aes_key": "file-key",
+              "encrypt_type": 1
+            },
+            "file_name": "log.txt",
+            "len": "64"
+          }
+        },
+        {
+          "type": 2,
+          "image_item": {
+            "media": {
+              "encrypt_query_param": "image-param",
+              "aes_key": "image-key",
+              "encrypt_type": 1
+            },
+            "mid_size": 100
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "ret": 0,
+  "get_updates_buf": "buf-file",
+  "msgs": [
+    {
+      "seq": 3,
+      "from_user_id": "user-file",
+      "context_token": "ctx-file",
+      "item_list": [
+        {
+          "type": 1,
+          "text_item": {
+            "text": "请看附件"
+          },
+          "ref_msg": {
+            "title": "文件摘要",
+            "message_item": {
+              "type": 4,
+              "file_item": {
+                "media": {
+                  "encrypt_query_param": "quoted-file-param",
+                  "aes_key": "quoted-file-key",
+                  "encrypt_type": 1
+                },
+                "file_name": "evidence.pdf",
+                "len": "128"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

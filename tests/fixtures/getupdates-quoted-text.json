@@ -1,0 +1,28 @@
+{
+  "ret": 0,
+  "get_updates_buf": "buf-quote",
+  "msgs": [
+    {
+      "seq": 2,
+      "from_user_id": "user-quote",
+      "context_token": "ctx-quote",
+      "item_list": [
+        {
+          "type": 1,
+          "text_item": {
+            "text": "回复正文"
+          },
+          "ref_msg": {
+            "title": "引用标题",
+            "message_item": {
+              "type": 1,
+              "text_item": {
+                "text": "被引用正文"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

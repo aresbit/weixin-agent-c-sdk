@@ -1,0 +1,20 @@
+{
+  "ret": 0,
+  "get_updates_buf": "buf-text",
+  "longpolling_timeout_ms": 42000,
+  "msgs": [
+    {
+      "seq": 1,
+      "from_user_id": "user-text",
+      "context_token": "ctx-text",
+      "item_list": [
+        {
+          "type": 1,
+          "text_item": {
+            "text": "hello from fixture"
+          }
+        }
+      ]
+    }
+  ]
+}

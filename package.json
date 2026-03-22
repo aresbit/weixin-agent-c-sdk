@@ -1,6 +1,0 @@
-{
-  "private": true,
-  "scripts": {
-    "typecheck": "pnpm -r run typecheck"
-  }
-}

@@ -1,151 +1,60 @@
-# weixin-agent-sdk
+# weixin-agent-c-sdk
 
-> 本项目非微信官方项目，代码由 [@tencent-weixin/openclaw-weixin](https://npmx.dev/package/@tencent-weixin/openclaw-weixin) 改造而来，仅供学习交流使用。
+> 本项目非微信官方项目，仅供学习交流使用。
 
-微信 AI Agent 桥接框架 —— 通过简单的 Agent 接口，将任意 AI 后端接入微信。
+纯 C 的微信 Agent SDK 与 ACP Bridge。你可以直接把 Codex/Claude 等 ACP Agent 接进微信。
 
-## 项目结构
+## 当前目录
 
-```
-packages/
-  sdk/                  weixin-agent-sdk —— 微信桥接 SDK
-  agent-acp/            ACP (Agent Client Protocol) 适配器
-  example-openai/       基于 OpenAI 的示例
-```
+- `include/` 公开头文件
+- `src/` SDK 与 ACP bridge 实现
+- `examples/` 示例程序（`weixin_acp_c`、`echo_bot`）
+- `tests/` 自测与 ACP smoke 测试
 
-## 通过 ACP 接入 Claude Code, Codex, kimi-cli 等 Agent
-
-[ACP (Agent Client Protocol)](https://agentclientprotocol.com/) 是一个开放的 Agent 通信协议。如果你已有兼容 ACP 的 agent，可以直接通过 [`weixin-acp`](https://www.npmjs.com/package/weixin-acp) 接入微信，无需编写任何代码。
-
-
-### 扫码登录
+## 构建与测试
 
 ```bash
-npx weixin-acp login
+make
+make test
 ```
 
-### Claude Code
+默认产物：
 
-> 需要先安装 [claude-agent-acp](https://github.com/zed-industries/claude-agent-acp)
+- `build/libweixin_agent_sdk.a`
+- `bin/echo_bot`
+- `bin/weixin_acp_c`
+- `bin/selftest`
+- `bin/acp_bridge_smoke`
+
+## 快速接入 Codex
 
 ```bash
-npx weixin-acp start -- claude-agent-acp
+# 1) 构建
+make
+
+# 2) 首次扫码登录（生成 bot token/account）
+./bin/weixin_acp_c login
+
+# 3) 安装 codex-acp（需本机已安装 node/npm）
+npm install -g @zed-industries/codex-acp
+
+# 4) 启动 C bridge + codex-acp
+./bin/weixin_acp_c start -- codex-acp
 ```
 
-### Codex
+详细步骤见文档：
 
-> 需要先安装 [codex-acp](https://github.com/zed-industries/codex-acp)
+- `docs/CODEX_CONNECT_GUIDE.md`
 
-```bash
-npx weixin-acp start -- codex-acp
-```
+## C API 对应关系
 
-### kimi-cli
+- `wxa_client_login()` 对应登录
+- `wxa_client_run()` 对应消息循环
+- `wxa_agent_vtable_t.chat` 对应上层 Agent 回调
 
-```bash
-npx weixin-acp start -- kimi acp
-```
+## 状态
 
-`--` 后面的部分就是你的 ACP agent 启动命令，`weixin-acp` 会自动以子进程方式启动它，通过 JSON-RPC over stdio 进行通信。
-
-更多 ACP 兼容 agent 请参考 [ACP agent 列表](https://agentclientprotocol.com/get-started/agents)。
-
-## 自定义 Agent
-
-SDK 只导出三样东西：
-
-- **`Agent`** 接口 —— 实现它就能接入微信
-- **`login()`** —— 扫码登录
-- **`start(agent)`** —— 启动消息循环
-
-### Agent 接口
-
-```typescript
-interface Agent {
-  chat(request: ChatRequest): Promise<ChatResponse>;
-}
-
-interface ChatRequest {
-  conversationId: string;         // 用户标识，可用于维护多轮对话
-  text: string;                   // 文本内容
-  media?: {                       // 附件（图片/语音/视频/文件）
-    type: "image" | "audio" | "video" | "file";
-    filePath: string;             // 本地文件路径（已下载解密）
-    mimeType: string;
-    fileName?: string;
-  };
-}
-
-interface ChatResponse {
-  text?: string;                  // 回复文本（支持 markdown，发送前自动转纯文本）
-  media?: {                       // 回复媒体
-    type: "image" | "video" | "file";
-    url: string;                  // 本地路径或 HTTPS URL
-    fileName?: string;
-  };
-}
-```
-
-### 最简示例
-
-```typescript
-import { login, start, type Agent } from "weixin-agent-sdk";
-
-const echo: Agent = {
-  async chat(req) {
-    return { text: `你说了: ${req.text}` };
-  },
-};
-
-await login();
-await start(echo);
-```
-
-### 完整示例（自己管理对话历史）
-
-```typescript
-import { login, start, type Agent } from "weixin-agent-sdk";
-
-const conversations = new Map<string, string[]>();
-
-const myAgent: Agent = {
-  async chat(req) {
-    const history = conversations.get(req.conversationId) ?? [];
-    history.push(req.text);
-
-    // 调用你的 AI 服务...
-    const reply = await callMyAI(history);
-
-    history.push(reply);
-    conversations.set(req.conversationId, history);
-    return { text: reply };
-  },
-};
-
-await login();
-await start(myAgent);
-```
-
-### OpenAI 示例
-
-`packages/example-openai/` 是一个完整的 OpenAI Agent 实现，支持多轮对话和图片输入：
-
-```bash
-pnpm install
-
-# 扫码登录微信
-pnpm run login -w packages/example-openai
-
-# 启动 bot
-OPENAI_API_KEY=sk-xxx pnpm run start -w packages/example-openai
-```
-
-支持的环境变量：
-
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `OPENAI_API_KEY` | 是 | OpenAI API Key |
-| `OPENAI_BASE_URL` | 否 | 自定义 API 地址（兼容 OpenAI 接口的第三方服务） |
+已覆盖：登录、长轮询、文本收发、基础媒体收发、`get_updates_buf` 持久化、ACP bridge。
 | `OPENAI_MODEL` | 否 | 模型名称，默认 `gpt-5.4` |
 | `SYSTEM_PROMPT` | 否 | 系统提示词 |
 

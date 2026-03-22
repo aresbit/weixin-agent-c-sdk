@@ -1,0 +1,24 @@
+{
+  "ret": 0,
+  "get_updates_buf": "buf-voice",
+  "msgs": [
+    {
+      "seq": 5,
+      "from_user_id": "user-voice",
+      "context_token": "ctx-voice",
+      "item_list": [
+        {
+          "type": 3,
+          "voice_item": {
+            "media": {
+              "encrypt_query_param": "voice-param",
+              "aes_key": "voice-key",
+              "encrypt_type": 1
+            },
+            "text": "这是语音转写"
+          }
+        }
+      ]
+    }
+  ]
+}
