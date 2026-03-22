@@ -26,6 +26,7 @@
 #define WXA_DEFAULT_LONG_POLL_TIMEOUT_MS 35000U
 #define WXA_DEFAULT_LOGIN_TIMEOUT_MS 480000U
 #define WXA_DEFAULT_API_TIMEOUT_MS 15000L
+#define WXA_SEND_API_TIMEOUT_MS 8000L
 #define WXA_DEFAULT_CONFIG_TIMEOUT_MS 10000L
 #define WXA_DEFAULT_CONNECT_TIMEOUT_MS 8000L
 #define WXA_TYPING_STATUS_TYPING 1
@@ -34,6 +35,10 @@
 #define WXA_SESSION_EXPIRED_PAUSE_MS (60U * 60U * 1000U)
 #define WXA_MAX_BYTES (100U * 1024U * 1024U)
 #define WXA_CURL_RETRY_MAX 3
+#define WXA_SEND_MIN_INTERVAL_MS 350ULL
+#define WXA_SEND_MAX_ATTEMPTS 2U
+#define WXA_RETRY_QUEUE_MAX 128U
+#define WXA_RETRY_QUEUE_MAX_ATTEMPTS 24U
 
 struct wxa_client {
   sp_str_t base_url;
@@ -50,6 +55,7 @@ struct wxa_client {
   bool stop_requested;
   long last_seq;
   long last_message_id;
+  sp_da(struct wxa_retry_send) retry_sends;
   unsigned long long last_send_at_ms;
 };
 
@@ -89,6 +95,12 @@ typedef enum {
   WXA_SEND_RESULT_FATAL = 2
 } wxa_send_result_t;
 
+typedef struct wxa_retry_send {
+  sp_str_t body;
+  unsigned int attempts;
+  unsigned long long next_retry_at_ms;
+} wxa_retry_send_t;
+
 typedef struct {
   int total;
   int failed;
@@ -108,6 +120,8 @@ static wxa_status_t wxa_parse_inbound_message(sp_str_t segment, wxa_inbound_mess
 static sp_str_t wxa_body_from_message_item(sp_str_t item);
 static void wxa_release_monitor_lock(wxa_client_t* client);
 static void wxa_log_sync_state(wxa_client_t* client, const char* phase, sp_str_t sync_buf);
+static unsigned int wxa_random_range_ms(unsigned int min_ms, unsigned int max_ms);
+static sp_str_t wxa_build_send_text_body(const char* to_user_id, const char* context_token, const char* text);
 
 static sp_str_t wxa_log_preview(sp_str_t value) {
   u32 preview_len = value.len < 48U ? value.len : 48U;
@@ -311,6 +325,19 @@ static unsigned int wxa_send_retry_delay_ms(unsigned int attempts) {
     delay = 5000U;
   }
   return delay;
+}
+
+static unsigned int wxa_retry_queue_delay_ms(unsigned int attempts) {
+  if (attempts <= 1U) {
+    return wxa_random_range_ms(60U, 140U);
+  }
+  if (attempts <= 3U) {
+    return wxa_random_range_ms(120U, 260U);
+  }
+  if (attempts <= 8U) {
+    return wxa_random_range_ms(220U, 500U);
+  }
+  return wxa_random_range_ms(450U, 900U);
 }
 
 static bool wxa_refresh_client_id_in_send_body(sp_str_t* body) {
@@ -2164,14 +2191,14 @@ static wxa_send_result_t wxa_sendmessage_post_raw(
   unsigned long long now = wxa_now_millis();
   if (client->last_send_at_ms > 0ULL && now > client->last_send_at_ms) {
     unsigned long long elapsed = now - client->last_send_at_ms;
-    if (elapsed < 120ULL) {
-      wxa_sleep_ms((unsigned int)(120ULL - elapsed));
+    if (elapsed < WXA_SEND_MIN_INTERVAL_MS) {
+      wxa_sleep_ms((unsigned int)(WXA_SEND_MIN_INTERVAL_MS - elapsed));
     }
   }
   (void)wxa_refresh_client_id_in_send_body(body);
   sp_str_t url = wxa_build_url(client->base_url, "ilink/bot/sendmessage");
   wxa_http_response_t response = {0};
-  wxa_status_t status = wxa_http_post_json(client, url, body->data, WXA_DEFAULT_API_TIMEOUT_MS, &response);
+  wxa_status_t status = wxa_http_post_json(client, url, body->data, WXA_SEND_API_TIMEOUT_MS, &response);
   client->last_send_at_ms = wxa_now_millis();
   bool found_ret = false;
   bool found_errcode = false;
@@ -2212,15 +2239,86 @@ static wxa_send_result_t wxa_sendmessage_post_raw(
   return WXA_SEND_RESULT_FATAL;
 }
 
-static wxa_status_t wxa_send_text(
-  wxa_client_t* client,
-  const char* to_user_id,
-  const char* context_token,
-  const char* text
-) {
-  sp_str_t escaped_text = wxa_json_escape(text);
-  sp_str_t escaped_to = wxa_json_escape(to_user_id);
-  sp_str_t escaped_context = wxa_json_escape(context_token);
+static void wxa_retry_send_remove_at(wxa_client_t* client, u32 index) {
+  u32 size = sp_dyn_array_size(client->retry_sends);
+  if (size == 0U || index >= size) {
+    return;
+  }
+  wxa_free_str(&client->retry_sends[index].body);
+  if (index != size - 1U) {
+    client->retry_sends[index] = client->retry_sends[size - 1U];
+  }
+  sp_dyn_array_pop(client->retry_sends);
+}
+
+static bool wxa_enqueue_retry_send(wxa_client_t* client, sp_str_t body) {
+  if (client == NULL || body.data == NULL || body.len == 0U) {
+    return false;
+  }
+  if (sp_dyn_array_size(client->retry_sends) >= WXA_RETRY_QUEUE_MAX) {
+    wxa_log(client, "retry queue full, drop oldest outbound");
+    wxa_retry_send_remove_at(client, 0U);
+  }
+  wxa_retry_send_t entry = {
+    .body = sp_str_copy(body),
+    .attempts = 0U,
+    .next_retry_at_ms = wxa_now_millis() + (unsigned long long)wxa_random_range_ms(40U, 100U)
+  };
+  sp_dyn_array_push(client->retry_sends, entry);
+  return true;
+}
+
+static void wxa_process_retry_sends(wxa_client_t* client, unsigned int budget) {
+  if (client == NULL || budget == 0U || sp_dyn_array_size(client->retry_sends) == 0U) {
+    return;
+  }
+
+  unsigned int processed = 0U;
+  u32 i = 0U;
+  while (i < sp_dyn_array_size(client->retry_sends) && processed < budget) {
+    unsigned long long now = wxa_now_millis();
+    wxa_retry_send_t* entry = &client->retry_sends[i];
+    if (entry->next_retry_at_ms > now) {
+      i++;
+      continue;
+    }
+
+    long ret = 0L;
+    long errcode = 0L;
+    wxa_send_result_t result = wxa_sendmessage_post_raw(client, &entry->body, &ret, &errcode);
+    entry->attempts++;
+    processed++;
+
+    if (result == WXA_SEND_RESULT_OK) {
+      sp_str_t msg = sp_format("retry send delivered attempts={}", SP_FMT_U32(entry->attempts));
+      wxa_log(client, msg.data);
+      wxa_free_str(&msg);
+      wxa_retry_send_remove_at(client, i);
+      continue;
+    }
+
+    if (result == WXA_SEND_RESULT_RETRYABLE && entry->attempts < WXA_RETRY_QUEUE_MAX_ATTEMPTS) {
+      entry->next_retry_at_ms = now + (unsigned long long)wxa_retry_queue_delay_ms(entry->attempts);
+      i++;
+      continue;
+    }
+
+    sp_str_t msg = sp_format(
+      "drop retry send attempts={} ret={} errcode={}",
+      SP_FMT_U32(entry->attempts),
+      SP_FMT_S64((s64)ret),
+      SP_FMT_S64((s64)errcode)
+    );
+    wxa_log(client, msg.data);
+    wxa_free_str(&msg);
+    wxa_retry_send_remove_at(client, i);
+  }
+}
+
+static sp_str_t wxa_build_send_text_body(const char* to_user_id, const char* context_token, const char* text) {
+  sp_str_t escaped_text = wxa_json_escape(text != NULL ? text : "");
+  sp_str_t escaped_to = wxa_json_escape(to_user_id != NULL ? to_user_id : "");
+  sp_str_t escaped_context = wxa_json_escape(context_token != NULL ? context_token : "");
   unsigned long long client_ms = wxa_now_millis();
   unsigned long long client_nonce = wxa_next_client_nonce();
   char* escaped_text_c = sp_str_to_cstr(escaped_text);
@@ -2237,12 +2335,28 @@ static wxa_status_t wxa_send_text(
     escaped_text_c,
     escaped_context_c
   );
+  wxa_free_str(&escaped_text);
+  wxa_free_str(&escaped_to);
+  wxa_free_str(&escaped_context);
+  sp_free(escaped_text_c);
+  sp_free(escaped_to_c);
+  sp_free(escaped_context_c);
+  return body;
+}
+
+static wxa_status_t wxa_send_text(
+  wxa_client_t* client,
+  const char* to_user_id,
+  const char* context_token,
+  const char* text
+) {
+  sp_str_t body = wxa_build_send_text_body(to_user_id, context_token, text);
   wxa_status_t status = WXA_OK;
   wxa_send_result_t result = WXA_SEND_RESULT_RETRYABLE;
   long last_ret = 0L;
   long last_errcode = 0L;
   unsigned int attempts = 0U;
-  for (attempts = 1U; attempts <= 3U; ++attempts) {
+  for (attempts = 1U; attempts <= WXA_SEND_MAX_ATTEMPTS; ++attempts) {
     result = wxa_sendmessage_post_raw(client, &body, &last_ret, &last_errcode);
     if (result == WXA_SEND_RESULT_OK) {
       status = WXA_OK;
@@ -2258,28 +2372,54 @@ static wxa_status_t wxa_send_text(
       wxa_free_str(&fail_msg);
       break;
     }
-    if (attempts < 3U) {
+    if (attempts < WXA_SEND_MAX_ATTEMPTS) {
       wxa_sleep_ms(wxa_send_retry_delay_ms(attempts));
     }
   }
 
   if (result == WXA_SEND_RESULT_RETRYABLE) {
-    sp_str_t fail_msg = sp_format(
-      "sendmessage retry exhausted ret={} errcode={}",
-      SP_FMT_S64((s64)last_ret),
-      SP_FMT_S64((s64)last_errcode)
-    );
-    status = wxa_fail(client, WXA_ERR_NETWORK, fail_msg.data);
-    wxa_free_str(&fail_msg);
+    bool queued = false;
+    if (context_token != NULL && context_token[0] != '\0') {
+      sp_str_t fallback = wxa_build_send_text_body(to_user_id, "", text);
+      long fb_ret = 0L;
+      long fb_errcode = 0L;
+      wxa_send_result_t fb_result = WXA_SEND_RESULT_RETRYABLE;
+      for (unsigned int i = 0U; i < 2U; ++i) {
+        fb_result = wxa_sendmessage_post_raw(client, &fallback, &fb_ret, &fb_errcode);
+        if (fb_result == WXA_SEND_RESULT_OK) {
+          wxa_log(client, "sendmessage fallback with empty context delivered");
+          status = WXA_OK;
+          break;
+        }
+        if (fb_result == WXA_SEND_RESULT_FATAL) {
+          break;
+        }
+      }
+      if (status != WXA_OK) {
+        queued = wxa_enqueue_retry_send(client, fallback);
+      }
+      wxa_free_str(&fallback);
+    } else {
+      queued = wxa_enqueue_retry_send(client, body);
+    }
+
+    if (status == WXA_OK) {
+      // no-op
+    } else if (queued) {
+      wxa_log(client, "sendmessage retry exhausted, queued for background delivery");
+      status = WXA_OK;
+    } else {
+      sp_str_t fail_msg = sp_format(
+        "sendmessage retry exhausted and enqueue failed ret={} errcode={}",
+        SP_FMT_S64((s64)last_ret),
+        SP_FMT_S64((s64)last_errcode)
+      );
+      status = wxa_fail(client, WXA_ERR_NETWORK, fail_msg.data);
+      wxa_free_str(&fail_msg);
+    }
   }
 
   wxa_free_str(&body);
-  wxa_free_str(&escaped_text);
-  wxa_free_str(&escaped_to);
-  wxa_free_str(&escaped_context);
-  sp_free(escaped_text_c);
-  sp_free(escaped_to_c);
-  sp_free(escaped_context_c);
   return status;
 }
 
@@ -2414,7 +2554,7 @@ static wxa_status_t wxa_send_uploaded_media(
   long last_ret = 0L;
   long last_errcode = 0L;
   unsigned int attempts = 0U;
-  for (attempts = 1U; attempts <= 3U; ++attempts) {
+  for (attempts = 1U; attempts <= WXA_SEND_MAX_ATTEMPTS; ++attempts) {
     result = wxa_sendmessage_post_raw(client, &body, &last_ret, &last_errcode);
     if (result == WXA_SEND_RESULT_OK) {
       status = WXA_OK;
@@ -2430,19 +2570,24 @@ static wxa_status_t wxa_send_uploaded_media(
       wxa_free_str(&fail_msg);
       break;
     }
-    if (attempts < 3U) {
+    if (attempts < WXA_SEND_MAX_ATTEMPTS) {
       wxa_sleep_ms(wxa_send_retry_delay_ms(attempts));
     }
   }
 
   if (result == WXA_SEND_RESULT_RETRYABLE) {
-    sp_str_t fail_msg = sp_format(
-      "sendmedia retry exhausted ret={} errcode={}",
-      SP_FMT_S64((s64)last_ret),
-      SP_FMT_S64((s64)last_errcode)
-    );
-    status = wxa_fail(client, WXA_ERR_NETWORK, fail_msg.data);
-    wxa_free_str(&fail_msg);
+    if (wxa_enqueue_retry_send(client, body)) {
+      wxa_log(client, "sendmedia retry exhausted, queued for background delivery");
+      status = WXA_OK;
+    } else {
+      sp_str_t fail_msg = sp_format(
+        "sendmedia retry exhausted and enqueue failed ret={} errcode={}",
+        SP_FMT_S64((s64)last_ret),
+        SP_FMT_S64((s64)last_errcode)
+      );
+      status = wxa_fail(client, WXA_ERR_NETWORK, fail_msg.data);
+      wxa_free_str(&fail_msg);
+    }
   }
 
   wxa_free_str(&body);
@@ -2484,6 +2629,7 @@ wxa_client_t* wxa_client_new(const wxa_client_options_t* options) {
   client->stop_requested = false;
   client->last_seq = 0L;
   client->last_message_id = 0L;
+  client->retry_sends = NULL;
   client->last_send_at_ms = 0ULL;
   (void)wxa_ensure_dir(client->media_dir);
   wxa_try_load_persisted_account(client);
@@ -2494,6 +2640,10 @@ void wxa_client_free(wxa_client_t* client) {
   if (client == NULL) {
     return;
   }
+  sp_dyn_array_for(client->retry_sends, i) {
+    wxa_free_str(&client->retry_sends[i].body);
+  }
+  sp_dyn_array_free(client->retry_sends);
   wxa_free_str(&client->base_url);
   wxa_free_str(&client->bot_token);
   wxa_free_str(&client->cdn_base_url);
@@ -2839,9 +2989,22 @@ static wxa_status_t wxa_process_updates(
       wxa_free_str(&msg);
       continue;
     }
-    process_status = wxa_dispatch_message_segment(client, agent, user_data, segment);
-    if (process_status != WXA_OK) {
-      break;
+    wxa_status_t dispatch_status = wxa_dispatch_message_segment(client, agent, user_data, segment);
+    if (dispatch_status != WXA_OK) {
+      if (dispatch_status == WXA_ERR_NETWORK || dispatch_status == WXA_ERR_TIMEOUT) {
+        // Do not block the whole updates stream on one transient reply failure.
+        sp_str_t msg = sp_format(
+          "dispatch transient failure status={} seq={} message_id={}, skip replay",
+          SP_FMT_CSTR(wxa_status_message(dispatch_status)),
+          SP_FMT_S64((s64)(found_seq ? seq : 0L)),
+          SP_FMT_S64((s64)(found_message_id ? message_id : 0L))
+        );
+        wxa_log(client, msg.data);
+        wxa_free_str(&msg);
+      } else {
+        process_status = dispatch_status;
+        break;
+      }
     }
     if (found_seq && found_message_id) {
       client->last_seq = seq;
@@ -2878,17 +3041,44 @@ static bool wxa_is_api_error_response(sp_str_t body, long* out_ret, long* out_er
   return (found_ret && ret != 0L) || (found_errcode && errcode != 0L);
 }
 
+static unsigned int wxa_random_range_ms(unsigned int min_ms, unsigned int max_ms) {
+  if (max_ms <= min_ms) {
+    return min_ms;
+  }
+  unsigned int span = max_ms - min_ms + 1U;
+  unsigned int value = 0U;
+  if (RAND_bytes((unsigned char*)&value, (int)sizeof(value)) != 1) {
+    value = (unsigned int)(wxa_now_millis() & 0xFFFFFFFFULL);
+  }
+  return min_ms + (value % span);
+}
+
 static void wxa_handle_monitor_backoff(wxa_client_t* client, unsigned int* consecutive_failures) {
   unsigned int failures = 1U;
+  unsigned int sleep_ms = 0U;
   if (consecutive_failures != NULL) {
     (*consecutive_failures)++;
     failures = *consecutive_failures;
   }
+  if (failures <= 1U) {
+    sleep_ms = wxa_random_range_ms(20U, 80U);
+  } else if (failures == 2U) {
+    sleep_ms = wxa_random_range_ms(80U, 180U);
+  } else if (failures == 3U) {
+    sleep_ms = wxa_random_range_ms(180U, 350U);
+  } else {
+    sleep_ms = wxa_random_range_ms(250U, 600U);
+  }
   sp_str_t msg = sp_format("loop error count={}", SP_FMT_U32(failures));
   wxa_log(client, msg.data);
   wxa_free_str(&msg);
-  wxa_sleep_ms(failures >= 3U ? 30000U : 2000U);
-  if (consecutive_failures != NULL && *consecutive_failures >= 3U) {
+  {
+    sp_str_t delay_msg = sp_format("loop backoff sleep_ms={}", SP_FMT_U32(sleep_ms));
+    wxa_log(client, delay_msg.data);
+    wxa_free_str(&delay_msg);
+  }
+  wxa_sleep_ms(sleep_ms);
+  if (consecutive_failures != NULL && *consecutive_failures >= 8U) {
     *consecutive_failures = 0U;
   }
 }
@@ -2993,23 +3183,44 @@ wxa_status_t wxa_client_run(
   unsigned int next_timeout_ms = timeout_ms;
   unsigned int consecutive_failures = 0U;
   unsigned int consecutive_ret_minus1 = 0U;
+  unsigned int retry_only_ticks = 0U;
   unsigned long long last_sync_reset_at_ms = 0ULL;
   unsigned long long last_msgs_at_ms = 0ULL;
   client->stop_requested = false;
   wxa_log(client, "weixin monitor started");
 
   while (!client->stop_requested) {
+    wxa_process_retry_sends(client, 24U);
+    if (sp_dyn_array_size(client->retry_sends) > 0U) {
+      retry_only_ticks++;
+      if (retry_only_ticks <= 3U) {
+        wxa_sleep_ms(wxa_random_range_ms(60U, 140U));
+        continue;
+      }
+      retry_only_ticks = 0U;
+    } else {
+      retry_only_ticks = 0U;
+    }
     wxa_refresh_sync_buf_from_disk(client);
     wxa_log_sync_state(client, "send", client->sync_buf);
     sp_str_t body = wxa_build_getupdates_body(client);
     sp_str_t url = wxa_build_url(client->base_url, "ilink/bot/getupdates");
     wxa_http_response_t response = {0};
     unsigned int effective_timeout_ms = next_timeout_ms;
+    if (sp_dyn_array_size(client->retry_sends) > 0U && effective_timeout_ms > 1500U) {
+      effective_timeout_ms = 1500U;
+    }
     wxa_status_t status = wxa_http_post_json(client, url, body.data, (long)effective_timeout_ms, &response);
     if (status != WXA_OK) {
       wxa_free_str(&response.body);
       wxa_free_str(&url);
       wxa_free_str(&body);
+      if (sp_dyn_array_size(client->retry_sends) > 0U) {
+        wxa_process_retry_sends(client, 48U);
+        wxa_sleep_ms(wxa_random_range_ms(80U, 180U));
+        consecutive_failures = 0U;
+        continue;
+      }
       wxa_handle_monitor_backoff(client, &consecutive_failures);
       continue;
     }
@@ -3074,6 +3285,12 @@ wxa_status_t wxa_client_run(
       wxa_free_str(&response.body);
       wxa_free_str(&url);
       wxa_free_str(&body);
+      if (sp_dyn_array_size(client->retry_sends) > 0U) {
+        wxa_process_retry_sends(client, 48U);
+        wxa_sleep_ms(wxa_random_range_ms(80U, 180U));
+        consecutive_failures = 0U;
+        continue;
+      }
       wxa_handle_monitor_backoff(client, &consecutive_failures);
       continue;
     }
@@ -3095,6 +3312,7 @@ wxa_status_t wxa_client_run(
       if (had_msgs) {
         last_msgs_at_ms = wxa_now_millis();
       }
+      wxa_process_retry_sends(client, 64U);
       consecutive_ret_minus1 = 0U;
       consecutive_failures = 0U;
       continue;
