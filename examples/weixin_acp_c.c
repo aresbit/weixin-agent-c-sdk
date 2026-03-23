@@ -7,12 +7,48 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifdef WXA_HAVE_QRENCODE
+#include <qrencode.h>
+#endif
+
 typedef struct {
   wxa_acp_agent_t* bridge;
 } wxa_app_t;
 
 static wxa_client_t* g_client = NULL;
 static const char* WXA_QR_PREFIX = "scan this QR URL with WeChat: ";
+
+#ifdef WXA_HAVE_QRENCODE
+static int wxa_qr_module(const QRcode* qr, int x, int y, int margin) {
+  int width = qr->width;
+  if (x < margin || y < margin || x >= width + margin || y >= width + margin) {
+    return 0;
+  }
+  int qx = x - margin;
+  int qy = y - margin;
+  return (qr->data[qy * width + qx] & 0x1) != 0;
+}
+
+static int wxa_print_qr_utf8(const char* content) {
+  const int margin = 2;
+  QRcode* qr = QRcode_encodeString8bit(content, 0, QR_ECLEVEL_M);
+  if (qr == NULL) {
+    return -1;
+  }
+
+  int full = qr->width + margin * 2;
+  fprintf(stderr, "\n");
+  for (int y = 0; y < full; ++y) {
+    for (int x = 0; x < full; ++x) {
+      fputs(wxa_qr_module(qr, x, y, margin) ? "██" : "  ", stderr);
+    }
+    fputc('\n', stderr);
+  }
+  fputc('\n', stderr);
+  QRcode_free(qr);
+  return 0;
+}
+#endif
 
 static void wxa_cli_log(void* user_data, const char* message) {
   (void)user_data;
@@ -27,11 +63,13 @@ static void wxa_cli_log(void* user_data, const char* message) {
   if (url[0] == '\0') {
     return;
   }
-  char cmd[2048];
-  int n = snprintf(cmd, sizeof(cmd), "qrencode -t UTF8 '%s'", url);
-  if (n > 0 && (size_t)n < sizeof(cmd)) {
-    (void)system(cmd);
+#ifdef WXA_HAVE_QRENCODE
+  if (wxa_print_qr_utf8(url) != 0) {
+    fprintf(stderr, "failed to render UTF QR in-process\n");
   }
+#else
+  fprintf(stderr, "qrencode dev library not linked; install libqrencode-dev and rebuild.\n");
+#endif
 }
 
 static void wxa_handle_signal(int signo) {
@@ -60,7 +98,9 @@ static void wxa_print_usage(const char* argv0) {
     "  %s start -- <acp-command> [args...]\n\n"
     "Examples:\n"
     "  %s start -- codex-acp\n"
+    "  %s start -- claude-agent-acp\n"
     "  %s start -- npx @zed-industries/codex-acp\n",
+    argv0,
     argv0,
     argv0,
     argv0,

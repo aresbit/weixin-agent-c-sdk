@@ -18,6 +18,21 @@ make
 make test
 ```
 
+说明：`weixin login` 会在终端直接打印 UTF 二维码（由 `libqrencode` 渲染，不依赖 `qrencode` 命令行）。
+
+安装（默认到 `/usr/local`）：
+
+```bash
+make install
+```
+
+安装后可直接使用 `weixin` 命令。若无 root 权限，可安装到用户目录：
+
+```bash
+make install PREFIX=$HOME/.local
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 默认产物：
 
 - `build/libweixin_agent_sdk.a`
@@ -29,17 +44,30 @@ make test
 ## 快速接入 Codex
 
 ```bash
-# 1) 构建
-make
+# 1) 安装 weixin 命令
+make install
 
 # 2) 首次扫码登录（生成 bot token/account）
-./bin/weixin_acp_c login
+weixin login
 
 # 3) 安装 codex-acp（需本机已安装 node/npm）
 npm install -g @zed-industries/codex-acp
 
 # 4) 启动 C bridge + codex-acp
-./bin/weixin_acp_c start -- codex-acp
+weixin start -- codex-acp
+```
+
+## 接入 Claude Agent（ACP）
+
+```bash
+# 1) 安装 Claude 的 ACP adapter
+npm install -g @zed-industries/claude-agent-acp
+
+# 2) 配置 Anthropic Key
+export ANTHROPIC_API_KEY=sk-...
+
+# 3) 启动桥接
+weixin start -- claude-agent-acp
 ```
 
 详细步骤见文档：
