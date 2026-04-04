@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 
 #ifdef WXA_HAVE_QRENCODE
 #include <qrencode.h>
@@ -97,6 +98,42 @@ static int wxa_bridge_chat(void* user_data, const wxa_chat_request_t* request, w
   return rc;
 }
 
+static int wxa_command_exists(const char* command) {
+  if (command == NULL || command[0] == '\0') {
+    return 0;
+  }
+  if (strchr(command, '/') != NULL) {
+    return access(command, X_OK) == 0;
+  }
+  const char* path_env = getenv("PATH");
+  if (path_env == NULL || path_env[0] == '\0') {
+    return 0;
+  }
+  const char* p = path_env;
+  while (*p != '\0') {
+    const char* end = strchr(p, ':');
+    size_t len = end != NULL ? (size_t)(end - p) : strlen(p);
+    char candidate[PATH_MAX];
+    if (len == 0U) {
+      p = end != NULL ? end + 1 : p + len;
+      continue;
+    }
+    if (len + 1U + strlen(command) + 1U < sizeof(candidate)) {
+      memcpy(candidate, p, len);
+      candidate[len] = '/';
+      strcpy(candidate + len + 1U, command);
+      if (access(candidate, X_OK) == 0) {
+        return 1;
+      }
+    }
+    if (end == NULL) {
+      break;
+    }
+    p = end + 1;
+  }
+  return 0;
+}
+
 static void wxa_print_usage(const char* argv0) {
   fprintf(
     stderr,
@@ -151,9 +188,11 @@ static int wxa_do_start(int argc, char** argv, int dd_index) {
   }
 
   acp_command = argv[dd_index + 1];
-  if (strcmp(acp_command, "claude-code-acp") == 0) {
-    fprintf(stderr, "rewrite ACP command: claude-code-acp -> claude-agent-acp\n");
-    acp_command = "claude-agent-acp";
+  if (strcmp(acp_command, "claude-code-acp") == 0 && !wxa_command_exists("claude-code-acp")) {
+    if (wxa_command_exists("claude-agent-acp")) {
+      fprintf(stderr, "fallback ACP command: claude-code-acp -> claude-agent-acp\n");
+      acp_command = "claude-agent-acp";
+    }
   }
 
   bridge_opts = (wxa_acp_agent_options_t){

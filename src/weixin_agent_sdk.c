@@ -77,6 +77,7 @@ typedef struct {
   sp_str_t from_user_id;
   wxa_media_type_t media_type;
   sp_str_t media_encrypt_param;
+  sp_str_t media_full_url;
   sp_str_t media_aes_key;
   sp_str_t media_hex_aes_key;
   sp_str_t media_file_name;
@@ -787,14 +788,21 @@ static void wxa_try_extract_media_from_item(
     if (image_item != NULL) {
       inbound->media_type = WXA_MEDIA_IMAGE;
       wxa_free_str(&inbound->media_encrypt_param);
+      wxa_free_str(&inbound->media_full_url);
       wxa_free_str(&inbound->media_aes_key);
       wxa_free_str(&inbound->media_hex_aes_key);
-      inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
-        item.data, image_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
-      );
-      inbound->media_aes_key = wxa_json_get_string_after_range_any(
-        item.data, image_item, item_end, "aes_key", "aesKey", NULL
-      );
+      char* media = wxa_find_object_in_range(image_item, "media", item_end);
+      if (media != NULL) {
+        inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "encrypt_query_param", NULL, NULL
+        );
+        inbound->media_full_url = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "full_url", NULL, NULL
+        );
+        inbound->media_aes_key = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "aes_key", "aesKey", NULL
+        );
+      }
       inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
         item.data, image_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
       );
@@ -805,14 +813,21 @@ static void wxa_try_extract_media_from_item(
     if (video_item != NULL) {
       inbound->media_type = WXA_MEDIA_VIDEO;
       wxa_free_str(&inbound->media_encrypt_param);
+      wxa_free_str(&inbound->media_full_url);
       wxa_free_str(&inbound->media_aes_key);
       wxa_free_str(&inbound->media_hex_aes_key);
-      inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
-        item.data, video_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
-      );
-      inbound->media_aes_key = wxa_json_get_string_after_range_any(
-        item.data, video_item, item_end, "aes_key", "aesKey", NULL
-      );
+      char* media = wxa_find_object_in_range(video_item, "media", item_end);
+      if (media != NULL) {
+        inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "encrypt_query_param", NULL, NULL
+        );
+        inbound->media_full_url = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "full_url", NULL, NULL
+        );
+        inbound->media_aes_key = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "aes_key", "aesKey", NULL
+        );
+      }
       inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
         item.data, video_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
       );
@@ -823,15 +838,22 @@ static void wxa_try_extract_media_from_item(
     if (file_item != NULL) {
       inbound->media_type = WXA_MEDIA_FILE;
       wxa_free_str(&inbound->media_encrypt_param);
+      wxa_free_str(&inbound->media_full_url);
       wxa_free_str(&inbound->media_aes_key);
       wxa_free_str(&inbound->media_hex_aes_key);
       wxa_free_str(&inbound->media_file_name);
-      inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
-        item.data, file_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
-      );
-      inbound->media_aes_key = wxa_json_get_string_after_range_any(
-        item.data, file_item, item_end, "aes_key", "aesKey", NULL
-      );
+      char* media = wxa_find_object_in_range(file_item, "media", item_end);
+      if (media != NULL) {
+        inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "encrypt_query_param", NULL, NULL
+        );
+        inbound->media_full_url = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "full_url", NULL, NULL
+        );
+        inbound->media_aes_key = wxa_json_get_string_after_range_any(
+          item.data, media, item_end, "aes_key", "aesKey", NULL
+        );
+      }
       inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
         item.data, file_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
       );
@@ -845,14 +867,21 @@ static void wxa_try_extract_media_from_item(
       if (voice_text.len == 0U) {
         inbound->media_type = WXA_MEDIA_AUDIO;
         wxa_free_str(&inbound->media_encrypt_param);
+        wxa_free_str(&inbound->media_full_url);
         wxa_free_str(&inbound->media_aes_key);
         wxa_free_str(&inbound->media_hex_aes_key);
-        inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
-          item.data, voice_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
-        );
-        inbound->media_aes_key = wxa_json_get_string_after_range_any(
-          item.data, voice_item, item_end, "aes_key", "aesKey", NULL
-        );
+        char* media = wxa_find_object_in_range(voice_item, "media", item_end);
+        if (media != NULL) {
+          inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+            item.data, media, item_end, "encrypt_query_param", NULL, NULL
+          );
+          inbound->media_full_url = wxa_json_get_string_after_range_any(
+            item.data, media, item_end, "full_url", NULL, NULL
+          );
+          inbound->media_aes_key = wxa_json_get_string_after_range_any(
+            item.data, media, item_end, "aes_key", "aesKey", NULL
+          );
+        }
         inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
           item.data, voice_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
         );
@@ -873,6 +902,7 @@ static void wxa_free_inbound_message(wxa_inbound_message_t* inbound) {
   wxa_free_str(&inbound->context_token);
   wxa_free_str(&inbound->from_user_id);
   wxa_free_str(&inbound->media_encrypt_param);
+  wxa_free_str(&inbound->media_full_url);
   wxa_free_str(&inbound->media_aes_key);
   wxa_free_str(&inbound->media_hex_aes_key);
   wxa_free_str(&inbound->media_file_name);
@@ -976,18 +1006,21 @@ static bool wxa_extract_downloadable_media_from_item(
     }
   }
 
-  if (candidate.media_type == WXA_MEDIA_NONE || candidate.media_encrypt_param.len == 0U) {
+  if (candidate.media_type == WXA_MEDIA_NONE ||
+      (candidate.media_encrypt_param.len == 0U && candidate.media_full_url.len == 0U)) {
     wxa_free_inbound_message(&candidate);
     return false;
   }
 
   wxa_free_str(&inbound->media_encrypt_param);
+  wxa_free_str(&inbound->media_full_url);
   wxa_free_str(&inbound->media_aes_key);
   wxa_free_str(&inbound->media_hex_aes_key);
   wxa_free_str(&inbound->media_file_name);
 
   inbound->media_type = candidate.media_type;
   inbound->media_encrypt_param = candidate.media_encrypt_param;
+  inbound->media_full_url = candidate.media_full_url;
   inbound->media_aes_key = candidate.media_aes_key;
   inbound->media_hex_aes_key = candidate.media_hex_aes_key;
   inbound->media_file_name = candidate.media_file_name;
@@ -1750,6 +1783,68 @@ static bool wxa_evp_crypt(
   return true;
 }
 
+static bool wxa_evp_decrypt_with_opts(
+  const unsigned char* in,
+  size_t in_len,
+  const unsigned char key[16],
+  const EVP_CIPHER* cipher,
+  int padding,
+  unsigned char** out,
+  size_t* out_len
+) {
+  EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+  int len1 = 0;
+  int len2 = 0;
+  unsigned char iv[16] = {0};
+  unsigned char* buffer = NULL;
+  if (ctx == NULL) {
+    return false;
+  }
+  buffer = sp_alloc((u32)in_len + 32U);
+  if (buffer == NULL) {
+    EVP_CIPHER_CTX_free(ctx);
+    return false;
+  }
+  if (EVP_DecryptInit_ex(ctx, cipher, NULL, key, iv) != 1) {
+    EVP_CIPHER_CTX_free(ctx);
+    sp_free(buffer);
+    return false;
+  }
+  EVP_CIPHER_CTX_set_padding(ctx, padding);
+  if (EVP_DecryptUpdate(ctx, buffer, &len1, in, (int)in_len) != 1 ||
+      EVP_DecryptFinal_ex(ctx, buffer + len1, &len2) != 1) {
+    EVP_CIPHER_CTX_free(ctx);
+    sp_free(buffer);
+    return false;
+  }
+  EVP_CIPHER_CTX_free(ctx);
+  *out = buffer;
+  *out_len = (size_t)(len1 + len2);
+  return true;
+}
+
+static bool wxa_evp_decrypt_media_robust(
+  const unsigned char* in,
+  size_t in_len,
+  const unsigned char key[16],
+  unsigned char** out,
+  size_t* out_len
+) {
+  if (wxa_evp_decrypt_with_opts(in, in_len, key, EVP_aes_128_ecb(), 1, out, out_len)) {
+    return true;
+  }
+  if ((in_len % 16U) == 0U && wxa_evp_decrypt_with_opts(in, in_len, key, EVP_aes_128_ecb(), 0, out, out_len)) {
+    return true;
+  }
+  if (wxa_evp_decrypt_with_opts(in, in_len, key, EVP_aes_128_cbc(), 1, out, out_len)) {
+    return true;
+  }
+  if ((in_len % 16U) == 0U && wxa_evp_decrypt_with_opts(in, in_len, key, EVP_aes_128_cbc(), 0, out, out_len)) {
+    return true;
+  }
+  return false;
+}
+
 static bool wxa_md5_file(const char* file_path, sp_str_t* out_hex, u64* out_size) {
   FILE* fp = fopen(file_path, "rb");
   EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -1809,10 +1904,81 @@ static sp_str_t wxa_guess_extension(sp_str_t mime) {
   if (sp_str_equal(mime, sp_str_lit("image/png"))) return sp_str_lit(".png");
   if (sp_str_equal(mime, sp_str_lit("image/jpeg"))) return sp_str_lit(".jpg");
   if (sp_str_equal(mime, sp_str_lit("image/gif"))) return sp_str_lit(".gif");
+  if (sp_str_equal(mime, sp_str_lit("image/webp"))) return sp_str_lit(".webp");
+  if (sp_str_equal(mime, sp_str_lit("image/heic"))) return sp_str_lit(".heic");
+  if (sp_str_equal(mime, sp_str_lit("image/avif"))) return sp_str_lit(".avif");
   if (sp_str_equal(mime, sp_str_lit("video/mp4"))) return sp_str_lit(".mp4");
   if (sp_str_equal(mime, sp_str_lit("audio/wav"))) return sp_str_lit(".wav");
   if (sp_str_equal(mime, sp_str_lit("application/pdf"))) return sp_str_lit(".pdf");
   return sp_str_lit(".bin");
+}
+
+static sp_str_t wxa_detect_image_mime(const unsigned char* data, size_t len) {
+  if (data == NULL || len < 4U) {
+    return sp_str_lit("");
+  }
+  if (len >= 3U && data[0] == 0xFFU && data[1] == 0xD8U && data[2] == 0xFFU) {
+    return sp_str_lit("image/jpeg");
+  }
+  if (len >= 8U &&
+      data[0] == 0x89U && data[1] == 0x50U && data[2] == 0x4EU && data[3] == 0x47U &&
+      data[4] == 0x0DU && data[5] == 0x0AU && data[6] == 0x1AU && data[7] == 0x0AU) {
+    return sp_str_lit("image/png");
+  }
+  if (len >= 6U &&
+      data[0] == 'G' && data[1] == 'I' && data[2] == 'F' &&
+      data[3] == '8' && (data[4] == '7' || data[4] == '9') && data[5] == 'a') {
+    return sp_str_lit("image/gif");
+  }
+  if (len >= 12U &&
+      data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F' &&
+      data[8] == 'W' && data[9] == 'E' && data[10] == 'B' && data[11] == 'P') {
+    return sp_str_lit("image/webp");
+  }
+  if (len >= 12U &&
+      data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p') {
+    if ((data[8] == 'a' && data[9] == 'v' && data[10] == 'i' && data[11] == 'f') ||
+        (data[8] == 'm' && data[9] == 'i' && data[10] == 'f' && data[11] == '1')) {
+      return sp_str_lit("image/avif");
+    }
+    if ((data[8] == 'h' && data[9] == 'e' && data[10] == 'i' && data[11] == 'c') ||
+        (data[8] == 'h' && data[9] == 'e' && data[10] == 'i' && data[11] == 'f')) {
+      return sp_str_lit("image/heic");
+    }
+  }
+  if (len >= 2U && data[0] == 'B' && data[1] == 'M') {
+    return sp_str_lit("image/bmp");
+  }
+  return sp_str_lit("");
+}
+
+static bool wxa_try_use_plain_image_payload(
+  wxa_client_t* client,
+  wxa_media_type_t media_type,
+  const unsigned char* encrypted,
+  size_t encrypted_len,
+  unsigned char** out_decrypted,
+  size_t* out_decrypted_len,
+  sp_str_t* out_detected_mime
+) {
+  if (media_type != WXA_MEDIA_IMAGE || encrypted == NULL || encrypted_len == 0U ||
+      out_decrypted == NULL || out_decrypted_len == NULL || out_detected_mime == NULL) {
+    return false;
+  }
+  sp_str_t detected = wxa_detect_image_mime(encrypted, encrypted_len);
+  if (detected.len == 0U) {
+    return false;
+  }
+  unsigned char* plain = sp_alloc((u32)encrypted_len + 1U);
+  if (plain == NULL) {
+    return false;
+  }
+  memcpy(plain, encrypted, encrypted_len);
+  *out_decrypted = plain;
+  *out_decrypted_len = encrypted_len;
+  *out_detected_mime = detected;
+  wxa_log(client, "image decrypt failed, fallback to plain image payload");
+  return true;
 }
 
 static sp_str_t wxa_cdn_download_url(wxa_client_t* client, sp_str_t param) {
@@ -2073,6 +2239,7 @@ static wxa_status_t wxa_download_media(
   wxa_client_t* client,
   wxa_media_type_t media_type,
   sp_str_t encrypt_param,
+  sp_str_t full_url,
   sp_str_t aes_key_base64,
   sp_str_t hex_aes_key,
   sp_str_t file_name,
@@ -2084,35 +2251,68 @@ static wxa_status_t wxa_download_media(
   size_t encrypted_len = 0U;
   unsigned char* decrypted = NULL;
   size_t decrypted_len = 0U;
-  sp_str_t url = wxa_cdn_download_url(client, encrypt_param);
+  sp_str_t mime = sp_str_lit("");
+  sp_str_t save_path = sp_str_lit("");
+  sp_str_t detected_image_mime = sp_str_lit("");
+  sp_str_t url = full_url.len > 0U ? sp_str_copy(full_url) : wxa_cdn_download_url(client, encrypt_param);
   wxa_http_response_t response = {0};
+  if (url.len == 0U) {
+    return wxa_fail(client, WXA_ERR_PROTOCOL, "missing media download url");
+  }
   wxa_status_t status = wxa_http_get(client, url, WXA_DEFAULT_API_TIMEOUT_MS, false, &response);
   wxa_status_t final_status = WXA_OK;
+  bool prefer_hex_for_image = media_type == WXA_MEDIA_IMAGE && hex_aes_key.len > 0U;
   sp_free((void*)url.data);
   if (status != WXA_OK) {
     return status;
   }
   encrypted = (unsigned char*)response.body.data;
   encrypted_len = response.body.len;
+
+  if (media_type == WXA_MEDIA_IMAGE && full_url.len > 0U) {
+    sp_str_t plain_mime = wxa_detect_image_mime(encrypted, encrypted_len);
+    if (plain_mime.len > 0U) {
+      decrypted = sp_alloc((u32)encrypted_len + 1U);
+      if (decrypted != NULL) {
+        memcpy(decrypted, encrypted, encrypted_len);
+        decrypted_len = encrypted_len;
+        detected_image_mime = plain_mime;
+        wxa_log(client, "image full_url payload looks plain image, skip decrypt");
+        goto decrypted_ok;
+      }
+    }
+  }
+
+  if (prefer_hex_for_image) {
+    if (wxa_hex_decode(hex_aes_key, key, 16U) &&
+        wxa_evp_decrypt_media_robust(encrypted, encrypted_len, key, &decrypted, &decrypted_len)) {
+      goto decrypted_ok;
+    }
+    // Keep trying with media.aes_key fallback for compatibility.
+  }
+
   if (aes_key_base64.len > 0U) {
     bool parsed = false;
     if (wxa_is_hex_key_text(aes_key_base64)) {
       if (!wxa_hex_decode(aes_key_base64, key, 16U)) {
-        final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media aes_key(hex)");
-        goto cleanup;
+        parsed = false;
+      } else {
+        key_len = 16U;
+        parsed = true;
       }
-      key_len = 16U;
-      parsed = true;
     } else if (wxa_base64_decode(aes_key_base64, key, &key_len)) {
       if (key_len == 32U) {
         sp_str_t hex_text = sp_str((const char*)key, (u32)key_len);
         if (!wxa_hex_decode(hex_text, key, 16U)) {
-          final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media hex aes_key");
-          goto cleanup;
+          parsed = false;
+        } else {
+          key_len = 16U;
+          parsed = true;
         }
-        key_len = 16U;
       }
-      parsed = true;
+      if (key_len == 16U) {
+        parsed = true;
+      }
     }
     if (!parsed && hex_aes_key.len > 0U && wxa_hex_decode(hex_aes_key, key, 16U)) {
       key_len = 16U;
@@ -2122,7 +2322,15 @@ static wxa_status_t wxa_download_media(
       final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media aes_key");
       goto cleanup;
     }
-    if (!wxa_evp_crypt(encrypted, encrypted_len, key, false, &decrypted, &decrypted_len)) {
+    if (!wxa_evp_decrypt_media_robust(encrypted, encrypted_len, key, &decrypted, &decrypted_len)) {
+      if (hex_aes_key.len > 0U && wxa_hex_decode(hex_aes_key, key, 16U) &&
+          wxa_evp_decrypt_media_robust(encrypted, encrypted_len, key, &decrypted, &decrypted_len)) {
+        goto decrypted_ok;
+      }
+      if (wxa_try_use_plain_image_payload(
+            client, media_type, encrypted, encrypted_len, &decrypted, &decrypted_len, &detected_image_mime)) {
+        goto decrypted_ok;
+      }
       final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "media decrypt failed");
       goto cleanup;
     }
@@ -2131,7 +2339,11 @@ static wxa_status_t wxa_download_media(
       final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid image hex aeskey");
       goto cleanup;
     }
-    if (!wxa_evp_crypt(encrypted, encrypted_len, key, false, &decrypted, &decrypted_len)) {
+    if (!wxa_evp_decrypt_media_robust(encrypted, encrypted_len, key, &decrypted, &decrypted_len)) {
+      if (wxa_try_use_plain_image_payload(
+            client, media_type, encrypted, encrypted_len, &decrypted, &decrypted_len, &detected_image_mime)) {
+        goto decrypted_ok;
+      }
       final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "media decrypt failed");
       goto cleanup;
     }
@@ -2141,14 +2353,15 @@ static wxa_status_t wxa_download_media(
     decrypted_len = encrypted_len;
   }
 
-  sp_str_t mime = media_type == WXA_MEDIA_IMAGE
-    ? sp_str_lit("image/jpeg")
+decrypted_ok:
+  mime = media_type == WXA_MEDIA_IMAGE
+    ? (detected_image_mime.len > 0U ? detected_image_mime : sp_str_lit("image/jpeg"))
     : media_type == WXA_MEDIA_VIDEO
       ? sp_str_lit("video/mp4")
       : media_type == WXA_MEDIA_AUDIO
         ? sp_str_lit("audio/silk")
         : (file_name.len > 0U ? wxa_guess_mime(file_name) : sp_str_lit("application/octet-stream"));
-  sp_str_t save_path = wxa_temp_media_path(client, mime, "media");
+  save_path = wxa_temp_media_path(client, mime, "media");
   if (!wxa_save_buffer_file(save_path, decrypted, decrypted_len)) {
     final_status = wxa_fail(client, WXA_ERR_NETWORK, "failed to persist media file");
     goto cleanup;
@@ -2990,11 +3203,13 @@ static wxa_status_t wxa_dispatch_message_segment(
   );
 
   status = WXA_OK;
-  if (inbound.media_type != WXA_MEDIA_NONE && inbound.media_encrypt_param.len > 0U) {
+  if (inbound.media_type != WXA_MEDIA_NONE &&
+      (inbound.media_encrypt_param.len > 0U || inbound.media_full_url.len > 0U)) {
     status = wxa_download_media(
       client,
       inbound.media_type,
       inbound.media_encrypt_param,
+      inbound.media_full_url,
       inbound.media_aes_key,
       inbound.media_hex_aes_key,
       inbound.media_file_name,
@@ -3002,11 +3217,12 @@ static wxa_status_t wxa_dispatch_message_segment(
     );
     if (status != WXA_OK) {
       sp_str_t msg = sp_format(
-        "media preprocess failed status={} err={} type={} param_len={} aes_len={} hex_len={}",
+        "media preprocess failed status={} err={} type={} param_len={} full_url_len={} aes_len={} hex_len={}",
         SP_FMT_CSTR(wxa_status_message(status)),
         SP_FMT_CSTR(wxa_client_last_error(client)),
         SP_FMT_S64((s64)inbound.media_type),
         SP_FMT_U32(inbound.media_encrypt_param.len),
+        SP_FMT_U32(inbound.media_full_url.len),
         SP_FMT_U32(inbound.media_aes_key.len),
         SP_FMT_U32(inbound.media_hex_aes_key.len)
       );
