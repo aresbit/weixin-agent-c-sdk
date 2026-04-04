@@ -111,6 +111,20 @@ weixin start -- claude-agent-acp
 | 文本 + 媒体 | `text` 和 `media` 同时返回，文本作为附带说明发送 |
 | 远程图片 | `url` 填 HTTPS 链接，SDK 自动下载后上传到微信 CDN |
 
+## 清理
+# 1) 停掉所有旧进程
+pkill -f weixin_acp_c || true
+pkill -f 'weixin start' || true
+pkill -f claude-agent-acp || true
+pkill -f claude-code-acp || true
+
+# 2) 删除运行锁
+find ~/.openclaw/openclaw-weixin/accounts -name '*.monitor.lock' -delete 2>/dev/null || true
+
+# 3) 删除会话游标（避免脏消息循环）
+find ~/.openclaw/openclaw-weixin/accounts -name '*.sync.json' -delete 2>/dev/null || true
+rm -f ~/.openclaw/last-getupdates-with-msgs.json 2>/dev/null || true
+
 ## 内置斜杠命令
 
 在微信中发送以下命令：

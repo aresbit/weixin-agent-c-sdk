@@ -495,7 +495,34 @@ static bool wxa_acp_wait_response(
   if (agent->pending.done && agent->pending.failed) {
     wxa_acp_set_error(agent, "acp request failed");
   } else if (!agent->ready) {
-    wxa_acp_set_error(agent, "acp subprocess stopped");
+    int status = 0;
+    pid_t waited = -1;
+    if (agent->child_pid > 0) {
+      waited = waitpid(agent->child_pid, &status, WNOHANG);
+    }
+    if (waited == agent->child_pid && WIFEXITED(status)) {
+      agent->child_pid = 0;
+      int code = WEXITSTATUS(status);
+      sp_str_t msg = wxa_acp_printf(
+        "acp subprocess stopped: command='%s' exit_code=%d%s",
+        agent->command.data != NULL ? agent->command.data : "",
+        code,
+        code == 127 ? " (command not found or not executable)" : ""
+      );
+      wxa_acp_set_error(agent, msg.data);
+      wxa_acp_free_str(&msg);
+    } else if (waited == agent->child_pid && WIFSIGNALED(status)) {
+      agent->child_pid = 0;
+      sp_str_t msg = wxa_acp_printf(
+        "acp subprocess stopped: command='%s' signal=%d",
+        agent->command.data != NULL ? agent->command.data : "",
+        WTERMSIG(status)
+      );
+      wxa_acp_set_error(agent, msg.data);
+      wxa_acp_free_str(&msg);
+    } else {
+      wxa_acp_set_error(agent, "acp subprocess stopped");
+    }
   } else {
     wxa_acp_set_error(agent, "acp request timed out");
   }
@@ -661,6 +688,7 @@ static char* wxa_acp_realpath_dup(sp_str_t path) {
 }
 
 static sp_str_t wxa_acp_build_prompt_json(wxa_acp_agent_t* agent, const wxa_chat_request_t* request) {
+  (void)agent;
   sp_str_builder_t builder = SP_ZERO_INITIALIZE();
   bool first = true;
   sp_str_builder_append_cstr(&builder, "[");
@@ -685,34 +713,25 @@ static sp_str_t wxa_acp_build_prompt_json(wxa_acp_agent_t* agent, const wxa_chat
     if (!first) {
       sp_str_builder_append_cstr(&builder, ",");
     }
-    if (request->media.type == WXA_MEDIA_IMAGE && agent->capabilities.image) {
+    if (request->media.type == WXA_MEDIA_IMAGE) {
       block = wxa_acp_printf(
         "{\"type\":\"image\",\"mimeType\":\"%s\",\"data\":\"%s\"}",
         escaped_mime.data,
         b64.data
       );
-    } else if (request->media.type == WXA_MEDIA_AUDIO && agent->capabilities.audio) {
+    } else if (request->media.type == WXA_MEDIA_AUDIO) {
       block = wxa_acp_printf(
         "{\"type\":\"audio\",\"mimeType\":\"%s\",\"data\":\"%s\"}",
         escaped_mime.data,
         b64.data
       );
-    } else if (agent->capabilities.embedded_context) {
+    } else {
       block = wxa_acp_printf(
         "{\"type\":\"resource\",\"resource\":{\"uri\":\"%s\",\"mimeType\":\"%s\",\"blob\":\"%s\"}}",
         escaped_uri.data,
         escaped_mime.data,
         b64.data
       );
-    } else {
-      sp_str_t name = wxa_acp_json_escape(request->media.file_name != NULL ? request->media.file_name : request->media.file_path);
-      block = wxa_acp_printf(
-        "{\"type\":\"resource_link\",\"resourceLink\":{\"uri\":\"%s\",\"name\":\"%s\",\"mimeType\":\"%s\"}}",
-        escaped_uri.data,
-        name.data,
-        escaped_mime.data
-      );
-      wxa_acp_free_str(&name);
     }
     sp_str_builder_append_cstr(&builder, block.data);
     wxa_acp_free_str(&block);
@@ -721,7 +740,7 @@ static sp_str_t wxa_acp_build_prompt_json(wxa_acp_agent_t* agent, const wxa_chat
     wxa_acp_free_str(&uri);
     wxa_acp_free_str(&b64);
     if (abs_path != NULL) {
-      free(abs_path);
+      sp_free(abs_path);
     }
   }
 

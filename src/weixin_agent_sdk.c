@@ -116,7 +116,6 @@ enum {
 
 static sp_str_t wxa_json_get_string(const char* body, const char* key);
 static sp_str_t wxa_json_get_string_after_range(const char* body, const char* after, const char* key, const char* end);
-static long wxa_json_get_long(const char* body, const char* key, bool* found);
 static long wxa_json_get_long_range(const char* body, const char* key, bool* found, const char* end);
 static sp_str_t wxa_printf(const char* fmt, ...);
 static void wxa_free_str(sp_str_t* value);
@@ -317,13 +316,6 @@ static sp_str_t wxa_make_client_id(void) {
     wxa_now_millis(),
     wxa_next_client_nonce()
   );
-}
-
-static bool wxa_is_retryable_send_error(wxa_status_t transport_status, long ret, long errcode) {
-  if (transport_status == WXA_ERR_NETWORK || transport_status == WXA_ERR_TIMEOUT) {
-    return true;
-  }
-  return ret == -1L || errcode == -1L;
 }
 
 static unsigned int wxa_send_retry_delay_ms(unsigned int attempts) {
@@ -738,17 +730,37 @@ static sp_str_t wxa_json_object_slice(const char* object_start, const char* end_
   return sp_str(object_start, (u32)(close - object_start + 1));
 }
 
-static void wxa_append_text_line(sp_str_t* acc, sp_str_t line) {
-  if (acc == NULL || line.len == 0U) {
-    return;
+static sp_str_t wxa_json_get_string_after_range_any(
+  const char* body,
+  const char* after,
+  const char* end,
+  const char* key1,
+  const char* key2,
+  const char* key3
+) {
+  sp_str_t out = sp_str_lit("");
+  if (key1 != NULL) {
+    out = wxa_json_get_string_after_range(body, after, key1, end);
+    if (out.len > 0U) {
+      return out;
+    }
+    wxa_free_str(&out);
   }
-  if (acc->len == 0U) {
-    *acc = sp_str_copy(line);
-    return;
+  if (key2 != NULL) {
+    out = wxa_json_get_string_after_range(body, after, key2, end);
+    if (out.len > 0U) {
+      return out;
+    }
+    wxa_free_str(&out);
   }
-  sp_str_t next = sp_format("{}\n{}", SP_FMT_STR(*acc), SP_FMT_STR(line));
-  wxa_free_str(acc);
-  *acc = next;
+  if (key3 != NULL) {
+    out = wxa_json_get_string_after_range(body, after, key3, end);
+    if (out.len > 0U) {
+      return out;
+    }
+    wxa_free_str(&out);
+  }
+  return sp_str_lit("");
 }
 
 static void wxa_try_extract_media_from_item(
@@ -777,9 +789,15 @@ static void wxa_try_extract_media_from_item(
       wxa_free_str(&inbound->media_encrypt_param);
       wxa_free_str(&inbound->media_aes_key);
       wxa_free_str(&inbound->media_hex_aes_key);
-      inbound->media_encrypt_param = wxa_json_get_string_after_range(item.data, image_item, "encrypt_query_param", item_end);
-      inbound->media_aes_key = wxa_json_get_string_after_range(item.data, image_item, "aes_key", item_end);
-      inbound->media_hex_aes_key = wxa_json_get_string_after_range(item.data, image_item, "aeskey", item_end);
+      inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+        item.data, image_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
+      );
+      inbound->media_aes_key = wxa_json_get_string_after_range_any(
+        item.data, image_item, item_end, "aes_key", "aesKey", NULL
+      );
+      inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
+        item.data, image_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
+      );
       inbound->media_mime_type = sp_str_lit("image/jpeg");
     }
   } else if (item_type == 5L) {
@@ -789,8 +807,15 @@ static void wxa_try_extract_media_from_item(
       wxa_free_str(&inbound->media_encrypt_param);
       wxa_free_str(&inbound->media_aes_key);
       wxa_free_str(&inbound->media_hex_aes_key);
-      inbound->media_encrypt_param = wxa_json_get_string_after_range(item.data, video_item, "encrypt_query_param", item_end);
-      inbound->media_aes_key = wxa_json_get_string_after_range(item.data, video_item, "aes_key", item_end);
+      inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+        item.data, video_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
+      );
+      inbound->media_aes_key = wxa_json_get_string_after_range_any(
+        item.data, video_item, item_end, "aes_key", "aesKey", NULL
+      );
+      inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
+        item.data, video_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
+      );
       inbound->media_mime_type = sp_str_lit("video/mp4");
     }
   } else if (item_type == 4L) {
@@ -801,8 +826,15 @@ static void wxa_try_extract_media_from_item(
       wxa_free_str(&inbound->media_aes_key);
       wxa_free_str(&inbound->media_hex_aes_key);
       wxa_free_str(&inbound->media_file_name);
-      inbound->media_encrypt_param = wxa_json_get_string_after_range(item.data, file_item, "encrypt_query_param", item_end);
-      inbound->media_aes_key = wxa_json_get_string_after_range(item.data, file_item, "aes_key", item_end);
+      inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+        item.data, file_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
+      );
+      inbound->media_aes_key = wxa_json_get_string_after_range_any(
+        item.data, file_item, item_end, "aes_key", "aesKey", NULL
+      );
+      inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
+        item.data, file_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
+      );
       inbound->media_file_name = wxa_json_get_string_after_range(item.data, file_item, "file_name", item_end);
       inbound->media_mime_type = wxa_guess_mime(inbound->media_file_name);
     }
@@ -815,8 +847,15 @@ static void wxa_try_extract_media_from_item(
         wxa_free_str(&inbound->media_encrypt_param);
         wxa_free_str(&inbound->media_aes_key);
         wxa_free_str(&inbound->media_hex_aes_key);
-        inbound->media_encrypt_param = wxa_json_get_string_after_range(item.data, voice_item, "encrypt_query_param", item_end);
-        inbound->media_aes_key = wxa_json_get_string_after_range(item.data, voice_item, "aes_key", item_end);
+        inbound->media_encrypt_param = wxa_json_get_string_after_range_any(
+          item.data, voice_item, item_end, "encrypt_query_param", "encrypted_query_param", NULL
+        );
+        inbound->media_aes_key = wxa_json_get_string_after_range_any(
+          item.data, voice_item, item_end, "aes_key", "aesKey", NULL
+        );
+        inbound->media_hex_aes_key = wxa_json_get_string_after_range_any(
+          item.data, voice_item, item_end, "aeskey", "hex_aes_key", "aes_key_hex"
+        );
         inbound->media_mime_type = sp_str_lit("audio/silk");
       }
       if (voice_text.data != NULL) {
@@ -1168,10 +1207,6 @@ static sp_str_t wxa_json_get_string(const char* body, const char* key) {
   return wxa_normalize_empty_string(sp_str_builder_to_str(&builder));
 }
 
-static long wxa_json_get_long(const char* body, const char* key, bool* found) {
-  return wxa_json_get_long_range(body, key, found, body + strlen(body));
-}
-
 static long wxa_json_get_long_range(const char* body, const char* key, bool* found, const char* end) {
   char* cursor = wxa_find_after_key_from_range(body, key, body, end);
   if (cursor == NULL) {
@@ -1421,6 +1456,42 @@ static bool wxa_pid_is_alive(pid_t pid) {
   return kill(pid, 0) == 0 || errno == EPERM;
 }
 
+static bool wxa_pid_is_weixin_monitor(pid_t pid) {
+#if defined(__linux__)
+  char proc_path[64];
+  int path_len = snprintf(proc_path, sizeof(proc_path), "/proc/%ld/cmdline", (long)pid);
+  if (path_len <= 0 || (size_t)path_len >= sizeof(proc_path)) {
+    return true;
+  }
+
+  FILE* fp = fopen(proc_path, "rb");
+  if (fp == NULL) {
+    return false;
+  }
+
+  char cmdline[512];
+  size_t got = fread(cmdline, 1U, sizeof(cmdline) - 1U, fp);
+  fclose(fp);
+  if (got == 0U) {
+    return false;
+  }
+  cmdline[got] = '\0';
+
+  const char* argv0 = cmdline;
+  size_t argv0_len = strnlen(argv0, got);
+  if (argv0_len == 0U) {
+    return false;
+  }
+
+  const char* base = strrchr(argv0, '/');
+  base = base != NULL ? base + 1 : argv0;
+  return strcmp(base, "weixin") == 0 || strcmp(base, "weixin_acp_c") == 0;
+#else
+  (void)pid;
+  return true;
+#endif
+}
+
 static void wxa_release_monitor_lock(wxa_client_t* client) {
   if (client == NULL || client->monitor_lock_path.len == 0U) {
     return;
@@ -1477,9 +1548,12 @@ static wxa_status_t wxa_acquire_monitor_lock(wxa_client_t* client) {
     }
 
     if (wxa_pid_is_alive((pid_t)existing_pid)) {
-      sp_free(lock_path_c);
-      wxa_free_str(&lock_path);
-      return wxa_fail(client, WXA_ERR_PROTOCOL, "monitor already running for account");
+      if (wxa_pid_is_weixin_monitor((pid_t)existing_pid)) {
+        sp_free(lock_path_c);
+        wxa_free_str(&lock_path);
+        return wxa_fail(client, WXA_ERR_PROTOCOL, "monitor already running for account");
+      }
+      wxa_log(client, "stale monitor lock pid reused by non-weixin process, removing lock");
     }
 
     (void)remove(lock_path_c);
@@ -1610,6 +1684,18 @@ static bool wxa_base64_decode(sp_str_t text, unsigned char* out, size_t* out_len
     text.len--;
   }
   *out_len = (size_t)len;
+  return true;
+}
+
+static bool wxa_is_hex_key_text(sp_str_t text) {
+  if (text.len != 32U || text.data == NULL) {
+    return false;
+  }
+  for (u32 i = 0; i < text.len; ++i) {
+    if (!isxdigit((unsigned char)text.data[i])) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -2001,6 +2087,7 @@ static wxa_status_t wxa_download_media(
   sp_str_t url = wxa_cdn_download_url(client, encrypt_param);
   wxa_http_response_t response = {0};
   wxa_status_t status = wxa_http_get(client, url, WXA_DEFAULT_API_TIMEOUT_MS, false, &response);
+  wxa_status_t final_status = WXA_OK;
   sp_free((void*)url.data);
   if (status != WXA_OK) {
     return status;
@@ -2008,25 +2095,45 @@ static wxa_status_t wxa_download_media(
   encrypted = (unsigned char*)response.body.data;
   encrypted_len = response.body.len;
   if (aes_key_base64.len > 0U) {
-    if (!wxa_base64_decode(aes_key_base64, key, &key_len)) {
-      return wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media aes_key");
-    }
-    if (key_len == 32U) {
-      sp_str_t hex_text = sp_str((const char*)key, (u32)key_len);
-      if (!wxa_hex_decode(hex_text, key, 16U)) {
-        return wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media hex aes_key");
+    bool parsed = false;
+    if (wxa_is_hex_key_text(aes_key_base64)) {
+      if (!wxa_hex_decode(aes_key_base64, key, 16U)) {
+        final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media aes_key(hex)");
+        goto cleanup;
       }
       key_len = 16U;
+      parsed = true;
+    } else if (wxa_base64_decode(aes_key_base64, key, &key_len)) {
+      if (key_len == 32U) {
+        sp_str_t hex_text = sp_str((const char*)key, (u32)key_len);
+        if (!wxa_hex_decode(hex_text, key, 16U)) {
+          final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media hex aes_key");
+          goto cleanup;
+        }
+        key_len = 16U;
+      }
+      parsed = true;
+    }
+    if (!parsed && hex_aes_key.len > 0U && wxa_hex_decode(hex_aes_key, key, 16U)) {
+      key_len = 16U;
+      parsed = true;
+    }
+    if (!parsed || key_len != 16U) {
+      final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid media aes_key");
+      goto cleanup;
     }
     if (!wxa_evp_crypt(encrypted, encrypted_len, key, false, &decrypted, &decrypted_len)) {
-      return wxa_fail(client, WXA_ERR_PROTOCOL, "media decrypt failed");
+      final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "media decrypt failed");
+      goto cleanup;
     }
   } else if (hex_aes_key.len > 0U) {
     if (!wxa_hex_decode(hex_aes_key, key, 16U)) {
-      return wxa_fail(client, WXA_ERR_PROTOCOL, "invalid image hex aeskey");
+      final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "invalid image hex aeskey");
+      goto cleanup;
     }
     if (!wxa_evp_crypt(encrypted, encrypted_len, key, false, &decrypted, &decrypted_len)) {
-      return wxa_fail(client, WXA_ERR_PROTOCOL, "media decrypt failed");
+      final_status = wxa_fail(client, WXA_ERR_PROTOCOL, "media decrypt failed");
+      goto cleanup;
     }
   } else {
     decrypted = sp_alloc((u32)encrypted_len + 1U);
@@ -2043,16 +2150,22 @@ static wxa_status_t wxa_download_media(
         : (file_name.len > 0U ? wxa_guess_mime(file_name) : sp_str_lit("application/octet-stream"));
   sp_str_t save_path = wxa_temp_media_path(client, mime, "media");
   if (!wxa_save_buffer_file(save_path, decrypted, decrypted_len)) {
-    sp_free(decrypted);
-    return wxa_fail(client, WXA_ERR_NETWORK, "failed to persist media file");
+    final_status = wxa_fail(client, WXA_ERR_NETWORK, "failed to persist media file");
+    goto cleanup;
   }
 
   out->type = media_type;
   out->file_path = save_path.data;
   out->mime_type = mime.data;
   out->file_name = file_name.len > 0U ? file_name.data : NULL;
-  sp_free(decrypted);
-  return WXA_OK;
+  final_status = WXA_OK;
+
+cleanup:
+  if (decrypted != NULL) {
+    sp_free(decrypted);
+  }
+  wxa_free_str(&response.body);
+  return final_status;
 }
 
 static wxa_status_t wxa_cdn_upload(
@@ -2888,6 +3001,17 @@ static wxa_status_t wxa_dispatch_message_segment(
       &request.media
     );
     if (status != WXA_OK) {
+      sp_str_t msg = sp_format(
+        "media preprocess failed status={} err={} type={} param_len={} aes_len={} hex_len={}",
+        SP_FMT_CSTR(wxa_status_message(status)),
+        SP_FMT_CSTR(wxa_client_last_error(client)),
+        SP_FMT_S64((s64)inbound.media_type),
+        SP_FMT_U32(inbound.media_encrypt_param.len),
+        SP_FMT_U32(inbound.media_aes_key.len),
+        SP_FMT_U32(inbound.media_hex_aes_key.len)
+      );
+      wxa_log(client, msg.data);
+      wxa_free_str(&msg);
       status = WXA_OK;
       request.media.type = WXA_MEDIA_NONE;
       request.media.file_path = NULL;
@@ -2896,11 +3020,8 @@ static wxa_status_t wxa_dispatch_message_segment(
     }
   }
 
-  int rc = agent->chat(user_data, &request, &response);
-  if (rc != 0) {
-    sp_str_t msg = sp_format("agent callback failed with {}", SP_FMT_S32(rc));
-    wxa_fail(client, WXA_ERR_CALLBACK, msg.data);
-    sp_free((void*)msg.data);
+  if ((request.text == NULL || request.text[0] == '\0') && request.media.type == WXA_MEDIA_NONE) {
+    wxa_log(client, "skip agent callback: no text/media after preprocess");
     wxa_send_typing(
       client,
       inbound.from_user_id.data,
@@ -2909,7 +3030,23 @@ static wxa_status_t wxa_dispatch_message_segment(
     );
     wxa_free_str(&typing_ticket);
     wxa_free_inbound_message(&inbound);
-    return WXA_ERR_CALLBACK;
+    return WXA_OK;
+  }
+
+  int rc = agent->chat(user_data, &request, &response);
+  if (rc != 0) {
+    sp_str_t msg = sp_format("agent callback failed with {}, skip this message", SP_FMT_S32(rc));
+    wxa_log(client, msg.data);
+    wxa_free_str(&msg);
+    wxa_send_typing(
+      client,
+      inbound.from_user_id.data,
+      typing_ticket,
+      WXA_TYPING_STATUS_CANCEL
+    );
+    wxa_free_str(&typing_ticket);
+    wxa_free_inbound_message(&inbound);
+    return WXA_OK;
   }
   {
     sp_str_t msg = sp_format(
@@ -3025,10 +3162,10 @@ static wxa_status_t wxa_process_updates(
     }
     wxa_status_t dispatch_status = wxa_dispatch_message_segment(client, agent, user_data, segment);
     if (dispatch_status != WXA_OK) {
-      if (dispatch_status == WXA_ERR_NETWORK || dispatch_status == WXA_ERR_TIMEOUT) {
-        // Do not block the whole updates stream on one transient reply failure.
+      if (dispatch_status == WXA_ERR_NETWORK || dispatch_status == WXA_ERR_TIMEOUT || dispatch_status == WXA_ERR_CALLBACK) {
+        // Do not block the whole updates stream on one message failure.
         sp_str_t msg = sp_format(
-          "dispatch transient failure status={} seq={} message_id={}, skip replay",
+          "dispatch failure status={} seq={} message_id={}, skip replay",
           SP_FMT_CSTR(wxa_status_message(dispatch_status)),
           SP_FMT_S64((s64)(found_seq ? seq : 0L)),
           SP_FMT_S64((s64)(found_message_id ? message_id : 0L))

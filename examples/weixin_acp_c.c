@@ -81,12 +81,20 @@ static void wxa_handle_signal(int signo) {
 
 static int wxa_bridge_chat(void* user_data, const wxa_chat_request_t* request, wxa_chat_response_t* response) {
   wxa_app_t* app = (wxa_app_t*)user_data;
+  int rc;
   response->text = NULL;
   response->media = (wxa_media_t){0};
   if (app == NULL || app->bridge == NULL) {
     return -1;
   }
-  return wxa_acp_agent_chat(app->bridge, request, response);
+  rc = wxa_acp_agent_chat(app->bridge, request, response);
+  if (rc != 0) {
+    const char* err = wxa_acp_agent_last_error(app->bridge);
+    if (err != NULL && err[0] != '\0') {
+      fprintf(stderr, "acp chat failed: %s\n", err);
+    }
+  }
+  return rc;
 }
 
 static void wxa_print_usage(const char* argv0) {
@@ -130,22 +138,31 @@ static int wxa_do_login(void) {
 
 static int wxa_do_start(int argc, char** argv, int dd_index) {
   const char* cwd = getenv("ACP_CWD");
+  const char* acp_command = NULL;
   wxa_client_t* client;
   wxa_acp_agent_t* bridge;
   wxa_app_t app;
   wxa_agent_vtable_t agent = { .chat = wxa_bridge_chat };
-  wxa_acp_agent_options_t bridge_opts = {
-    .command = argv[dd_index + 1],
-    .args = (const char* const*)&argv[dd_index + 2],
-    .arg_count = argc - dd_index - 2,
-    .cwd = cwd != NULL ? cwd : NULL,
-    .prompt_timeout_ms = 120000U
-  };
+  wxa_acp_agent_options_t bridge_opts = {0};
 
   if (dd_index + 1 >= argc) {
     fprintf(stderr, "missing ACP command after --\n");
     return 1;
   }
+
+  acp_command = argv[dd_index + 1];
+  if (strcmp(acp_command, "claude-code-acp") == 0) {
+    fprintf(stderr, "rewrite ACP command: claude-code-acp -> claude-agent-acp\n");
+    acp_command = "claude-agent-acp";
+  }
+
+  bridge_opts = (wxa_acp_agent_options_t){
+    .command = acp_command,
+    .args = (const char* const*)&argv[dd_index + 2],
+    .arg_count = argc - dd_index - 2,
+    .cwd = cwd != NULL ? cwd : NULL,
+    .prompt_timeout_ms = 120000U
+  };
 
   client = wxa_client_new(&(wxa_client_options_t){
     .log_fn = wxa_cli_log
