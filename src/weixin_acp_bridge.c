@@ -127,6 +127,27 @@ static char* wxa_acp_find_after_key(const char* body, const char* key) {
   return *match == ':' ? match + 1 : NULL;
 }
 
+static void wxa_acp_decode_unicode_escape(sp_str_builder_t* builder, const char* hex4) {
+  unsigned int cp = 0U;
+  for (int i = 0; i < 4; i++) {
+    char h = hex4[i];
+    if      (h >= '0' && h <= '9') { cp = cp * 16U + (unsigned int)(h - '0'); }
+    else if (h >= 'a' && h <= 'f') { cp = cp * 16U + (unsigned int)(h - 'a') + 10U; }
+    else if (h >= 'A' && h <= 'F') { cp = cp * 16U + (unsigned int)(h - 'A') + 10U; }
+    else { sp_str_builder_append_c8(builder, '?'); return; }
+  }
+  if (cp < 0x80U) {
+    sp_str_builder_append_c8(builder, (c8)cp);
+  } else if (cp < 0x800U) {
+    sp_str_builder_append_c8(builder, (c8)(0xC0U | (cp >> 6U)));
+    sp_str_builder_append_c8(builder, (c8)(0x80U | (cp & 0x3FU)));
+  } else {
+    sp_str_builder_append_c8(builder, (c8)(0xE0U | (cp >> 12U)));
+    sp_str_builder_append_c8(builder, (c8)(0x80U | ((cp >> 6U) & 0x3FU)));
+    sp_str_builder_append_c8(builder, (c8)(0x80U | (cp & 0x3FU)));
+  }
+}
+
 static sp_str_t wxa_acp_json_get_string(const char* body, const char* key) {
   char* cursor = wxa_acp_find_after_key(body, key);
   sp_str_builder_t builder = SP_ZERO_INITIALIZE();
@@ -159,8 +180,8 @@ static sp_str_t wxa_acp_json_get_string(const char* body, const char* key) {
         case 'r': sp_str_builder_append_c8(&builder, '\r'); break;
         case 't': sp_str_builder_append_c8(&builder, '\t'); break;
         case 'u':
+          wxa_acp_decode_unicode_escape(&builder, cursor + 1);
           cursor += 4;
-          sp_str_builder_append_c8(&builder, '?');
           break;
         default:
           sp_str_builder_append_c8(&builder, *cursor);

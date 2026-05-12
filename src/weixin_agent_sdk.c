@@ -133,6 +133,27 @@ static sp_str_t wxa_build_send_text_body(const char* to_user_id, const char* con
 static void wxa_log_at(wxa_client_t* client, unsigned int level, const char* message);
 static void wxa_log_debug(wxa_client_t* client, const char* message);
 
+static void wxa_decode_unicode_escape(sp_str_builder_t* builder, const char* hex4) {
+  unsigned int cp = 0U;
+  for (int i = 0; i < 4; i++) {
+    char h = hex4[i];
+    if      (h >= '0' && h <= '9') { cp = cp * 16U + (unsigned int)(h - '0'); }
+    else if (h >= 'a' && h <= 'f') { cp = cp * 16U + (unsigned int)(h - 'a') + 10U; }
+    else if (h >= 'A' && h <= 'F') { cp = cp * 16U + (unsigned int)(h - 'A') + 10U; }
+    else { sp_str_builder_append_c8(builder, '?'); return; }
+  }
+  if (cp < 0x80U) {
+    sp_str_builder_append_c8(builder, (c8)cp);
+  } else if (cp < 0x800U) {
+    sp_str_builder_append_c8(builder, (c8)(0xC0U | (cp >> 6U)));
+    sp_str_builder_append_c8(builder, (c8)(0x80U | (cp & 0x3FU)));
+  } else {
+    sp_str_builder_append_c8(builder, (c8)(0xE0U | (cp >> 12U)));
+    sp_str_builder_append_c8(builder, (c8)(0x80U | ((cp >> 6U) & 0x3FU)));
+    sp_str_builder_append_c8(builder, (c8)(0x80U | (cp & 0x3FU)));
+  }
+}
+
 static sp_str_t wxa_log_preview(sp_str_t value) {
   u32 preview_len = value.len < 48U ? value.len : 48U;
   if (preview_len == 0U || value.data == NULL) {
@@ -212,7 +233,7 @@ static sp_str_t wxa_json_get_top_level_string(sp_str_t body, const char* key) {
         case 'n': sp_str_builder_append_c8(&builder, '\n'); break;
         case 'r': sp_str_builder_append_c8(&builder, '\r'); break;
         case 't': sp_str_builder_append_c8(&builder, '\t'); break;
-        case 'u': cursor += 4; sp_str_builder_append_c8(&builder, '?'); break;
+        case 'u': wxa_decode_unicode_escape(&builder, cursor + 1); cursor += 4; break;
         default: sp_str_builder_append_c8(&builder, *cursor); break;
       }
     } else {
@@ -1157,7 +1178,7 @@ static sp_str_t wxa_json_get_string_after_range(const char* body, const char* af
         case 'n': sp_str_builder_append_c8(&builder, '\n'); break;
         case 'r': sp_str_builder_append_c8(&builder, '\r'); break;
         case 't': sp_str_builder_append_c8(&builder, '\t'); break;
-        case 'u': p += 4; sp_str_builder_append_c8(&builder, '?'); break;
+        case 'u': wxa_decode_unicode_escape(&builder, p + 1); p += 4; break;
         default: sp_str_builder_append_c8(&builder, *p); break;
       }
     } else {
@@ -1217,8 +1238,8 @@ static sp_str_t wxa_json_get_string(const char* body, const char* key) {
           break;
         }
         case 'u': {
+          wxa_decode_unicode_escape(&builder, cursor + 1);
           cursor += 4;
-          sp_str_builder_append_c8(&builder, '?');
           break;
         }
         case '\0': {
@@ -3150,6 +3171,42 @@ wxa_status_t wxa_client_login(
   return wxa_fail(client, WXA_ERR_TIMEOUT, "login timed out");
 }
 
+static bool wxa_silk_transcoder_ok(void) {
+  static int cached = -1;
+  if (cached < 0) {
+    cached = (system("python3 -c 'import silkcoder' 2>/dev/null") == 0) ? 1 : 0;
+  }
+  return cached == 1;
+}
+
+static sp_str_t wxa_transcode_silk(wxa_client_t* client, const char* silk_path) {
+  if (!wxa_silk_transcoder_ok()) {
+    return sp_str_lit("");
+  }
+  char mp3_buf[PATH_MAX];
+  const char* dot = strrchr(silk_path, '.');
+  size_t base_len = dot != NULL ? (size_t)(dot - silk_path) : strlen(silk_path);
+  if (base_len + 4U >= sizeof(mp3_buf)) {
+    return sp_str_lit("");
+  }
+  memcpy(mp3_buf, silk_path, base_len);
+  memcpy(mp3_buf + base_len, ".mp3", 5U);
+
+  sp_str_t cmd = sp_format(
+    "python3 -m silkcoder decode {} {} 2>/dev/null",
+    SP_FMT_CSTR(silk_path), SP_FMT_CSTR(mp3_buf)
+  );
+  int rc = system(cmd.data);
+  wxa_free_str(&cmd);
+  if (rc != 0) {
+    sp_str_t msg = sp_format("silkcoder rc={}, passing raw SILK to agent", SP_FMT_S32(rc));
+    wxa_log(client, msg.data);
+    wxa_free_str(&msg);
+    return sp_str_lit("");
+  }
+  return sp_str_from_cstr(mp3_buf);
+}
+
 static wxa_status_t wxa_dispatch_message_segment(
   wxa_client_t* client,
   const wxa_agent_vtable_t* agent,
@@ -3231,6 +3288,17 @@ static wxa_status_t wxa_dispatch_message_segment(
       request.media.file_path = NULL;
       request.media.mime_type = NULL;
       request.media.file_name = NULL;
+    }
+  }
+
+  if (request.media.type == WXA_MEDIA_AUDIO && request.media.file_path != NULL) {
+    sp_str_t mp3 = wxa_transcode_silk(client, request.media.file_path);
+    if (mp3.len > 0U) {
+      sp_free((void*)request.media.file_path);
+      request.media.file_path = mp3.data;
+      request.media.mime_type = "audio/mpeg";
+    } else {
+      wxa_free_str(&mp3);
     }
   }
 
