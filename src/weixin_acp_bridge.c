@@ -460,6 +460,7 @@ static bool wxa_acp_wait_response(
   unsigned int timeout_ms,
   sp_str_t* out_payload
 ) {
+  (void)request_id;
   struct timespec ts;
   if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
     return false;
@@ -472,11 +473,6 @@ static bool wxa_acp_wait_response(
   }
 
   pthread_mutex_lock(&agent->mutex);
-  agent->pending.id = request_id;
-  agent->pending.done = false;
-  agent->pending.failed = false;
-  wxa_acp_free_str(&agent->pending.payload);
-
   while (!agent->pending.done && agent->ready) {
     int rc = pthread_cond_timedwait(&agent->cond, &agent->mutex, &ts);
     if (rc == ETIMEDOUT) {
@@ -542,6 +538,9 @@ static bool wxa_acp_send_request(
   pthread_mutex_lock(&agent->mutex);
   request_id = agent->pending.id + 1;
   agent->pending.id = request_id;
+  agent->pending.done = false;
+  agent->pending.failed = false;
+  wxa_acp_free_str(&agent->pending.payload);
   pthread_mutex_unlock(&agent->mutex);
 
   payload = wxa_acp_printf(

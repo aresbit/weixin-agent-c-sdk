@@ -887,9 +887,7 @@ static void wxa_try_extract_media_from_item(
         );
         inbound->media_mime_type = sp_str_lit("audio/silk");
       }
-      if (voice_text.data != NULL) {
-        sp_free((void*)voice_text.data);
-      }
+      wxa_free_str(&voice_text);
     }
   }
 }
